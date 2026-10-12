@@ -1,10 +1,7 @@
-// ─────────────────────────────────────────────────────────────────────────
-// YouTube API — real backend calls only.
-// Only endpoints that exist on the backend today are implemented.
-// Endpoints for videos/analytics/profile/etc. will be added when the
-// backend supports them (see bottom of file for the list).
-// ─────────────────────────────────────────────────────────────────────────
+// YouTube API client for the FastAPI backend.
+// Uses relative paths, so requests go through the Vite dev proxy (same origin, cookie works).
 
+// Error with HTTP status and a short code: 'timeout' | 'network' | 'unauthorized' | 'forbidden' | 'server' | 'http'
 export class YoutubeApiError extends Error {
   constructor(message, status, code = 'http') {
     super(message)
@@ -16,12 +13,9 @@ export class YoutubeApiError extends Error {
 
 const AUTH_TIMEOUT_MS = 12000
 
-/**
- * Maps the frontend's expected auth paths to the backend's real paths.
- *   /auth/youtube/login  → /auth/google/login
- *   /auth/youtube/logout → /auth/logout
- * The Vite proxy forwards /auth/* to the backend.
- */
+// Maps the frontend's auth paths to the backend's real ones
+//   /auth/youtube/login  -> /auth/google/login
+//   /auth/youtube/logout -> /auth/logout
 export function youtubeAuthUrl(path) {
   const normalized = path.startsWith('/') ? path : `/${path}`
   if (normalized === '/auth/youtube/login') return '/auth/google/login'
@@ -29,6 +23,7 @@ export function youtubeAuthUrl(path) {
   return normalized
 }
 
+// Reads the body as text first, then parses JSON only when the server says it is JSON
 async function responseBody(response) {
   const text = await response.text()
   if (!text) return null
@@ -40,6 +35,7 @@ async function responseBody(response) {
   }
 }
 
+// Pulls a readable message out of FastAPI error bodies
 function detailMessage(data) {
   if (data && typeof data === 'object') {
     if ('detail' in data) {
@@ -53,12 +49,13 @@ function detailMessage(data) {
   return 'YouTube Intelligence is currently unavailable. Please try again.'
 }
 
+// Core request helper. options: { method, body, signal, timeoutMs, csrf }
 export async function youtubeRequest(path, options = {}) {
-  const requestUrl = path.startsWith('http') ? path : path
   const requestController = new AbortController()
   const timeoutMs = options.timeoutMs
   let timedOut = false
 
+  // Forward the caller's abort signal to our own controller
   const abortFromCaller = () => requestController.abort(options.signal?.reason)
   if (options.signal?.aborted) abortFromCaller()
   else options.signal?.addEventListener('abort', abortFromCaller, { once: true })
@@ -73,9 +70,9 @@ export async function youtubeRequest(path, options = {}) {
   let response
   let data
   try {
-    response = await fetch(requestUrl, {
+    response = await fetch(path, {
       method: options.method || 'GET',
-      credentials: 'include',
+      credentials: 'include', // sends the access_token cookie
       signal: requestController.signal,
       headers: {
         Accept: 'application/json',
@@ -86,7 +83,7 @@ export async function youtubeRequest(path, options = {}) {
     })
     data = await responseBody(response)
   } catch (error) {
-    if (options.signal?.aborted) throw error
+    if (options.signal?.aborted) throw error // caller cancelled, let it through untouched
     if (timedOut) {
       throw new YoutubeApiError('The request timed out. Please try again.', null, 'timeout')
     }
@@ -99,47 +96,26 @@ export async function youtubeRequest(path, options = {}) {
 
   if (!response.ok) {
     console.error('[YouTube API] Error response', { path, status: response.status, body: data })
-    const code = response.status === 401
-      ? 'unauthorized'
-      : response.status === 403
-        ? 'forbidden'
-        : response.status >= 500
-          ? 'server'
-          : 'http'
+    const code =
+      response.status === 401 ? 'unauthorized'
+      : response.status === 403 ? 'forbidden'
+      : response.status >= 500 ? 'server'
+      : 'http'
     throw new YoutubeApiError(detailMessage(data), response.status, code)
   }
 
   return data
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Real endpoints (exist on the backend today)
-// ─────────────────────────────────────────────────────────────────────────
+// ── Auth endpoints ──────────────────────────────────────────────────────
 
-/** GET /auth/me — check if the user is logged in. 401 if not. */
+// GET /auth/me: is the user logged in? (401 if not)
 export const getAuthMe = (options = {}) =>
   youtubeRequest('/auth/me', { timeoutMs: AUTH_TIMEOUT_MS, ...options })
 
-/** GET /auth/channels — return the signed-in user's saved YouTube channels. */
+// GET /auth/channels: the signed-in user's saved YouTube channels
 export const getAuthChannels = (options = {}) =>
   youtubeRequest('/auth/channels', { timeoutMs: AUTH_TIMEOUT_MS, ...options })
 
-/** POST /auth/logout — clear the JWT cookie. */
+// POST /auth/logout: clears the JWT cookie
 export const logoutUser = () => youtubeRequest('/auth/logout', { method: 'POST' })
-
-// ─────────────────────────────────────────────────────────────────────────
-// Endpoints to be added on the backend later (uncomment when available)
-// ─────────────────────────────────────────────────────────────────────────
-//
-// export const getWorkspace    = ()           => youtubeRequest('/api/youtube/workspace')
-// export const getDashboard    = (channelId)  => youtubeRequest('/dashboard/' + encodeURIComponent(channelId))
-// export const getAnalytics    = (channelId)  => youtubeRequest('/analytics/' + encodeURIComponent(channelId))
-// export const getLogs         = (channelId)  => youtubeRequest('/api/logs/' + encodeURIComponent(channelId))
-// export const saveProfile     = (channelId, profile) =>
-//   youtubeRequest('/api/channels/' + encodeURIComponent(channelId) + '/profile', { method: 'PUT', body: profile })
-// export const saveSelection   = (channelId, videoIds) =>
-//   youtubeRequest('/save-selected-videos', { method: 'POST', body: { channel_id: channelId, video_ids: videoIds } })
-// export const saveSchedule    = (channelId, schedule) =>
-//   youtubeRequest('/api/channels/' + encodeURIComponent(channelId) + '/schedule', { method: 'PUT', body: schedule })
-// export const toggleAutomation = (channelId, running) =>
-//   youtubeRequest('/api/toggle-bot/' + encodeURIComponent(channelId), { method: 'POST', body: { running } })

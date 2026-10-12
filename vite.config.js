@@ -50,6 +50,8 @@ export default defineConfig(({ mode }) => {
         '/selection-videos': backendProxy,
         '/comments': backendProxy,
         '/ai': backendProxy,
+        '/analytics': backendProxy,
+        '/demo':backendProxy,
       },
     },
   }
