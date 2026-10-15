@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
 
   // Common backend proxy configuration
   const backendProxy = {
-    target: env.BACKEND_URL,
+    target: env.VITE_BACKEND_URL,
     changeOrigin: true,
     secure: true,
     headers: {
